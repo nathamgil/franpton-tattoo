@@ -93,7 +93,44 @@
     catch (e) { return []; }
   }
   function demoGrava(lista) {
-    try { localStorage.setItem(CHAVE, JSON.stringify(lista)); } catch (e) {}
+    try { localStorage.setItem(CHAVE, JSON.stringify(lista)); return true; } catch (e) { return false; }
+  }
+  // Imagens de referência pesam: se a cota do navegador estourar, tira
+  // primeiro as imagens dos pedidos mais antigos e, por último, as deste.
+  function demoGravaComAnexos(lista, novo) {
+    if (demoGrava(lista)) return;
+    for (var i = 0; i < lista.length - 1; i++) {
+      if (!lista[i].anexos || !lista[i].anexos.length) continue;
+      lista[i].anexos_fora = lista[i].anexos.length; lista[i].anexos = [];
+      if (demoGrava(lista)) return;
+    }
+    while (novo.anexos.length) {
+      novo.anexos.pop(); novo.anexos_fora = (novo.anexos_fora || 0) + 1;
+      if (demoGrava(lista)) return;
+    }
+    demoGrava(lista);
+  }
+
+  // Modo real: sobe as referências para o bucket privado "referencias"
+  // (anon só pode inserir) e devolve os caminhos para gravar no pedido.
+  function sobeAnexos(lista) {
+    if (!lista || !lista.length) return Promise.resolve([]);
+    var pasta = iso(new Date()).replace(/-/g, '');
+    return Promise.all(lista.map(function (dataUrl) {
+      var id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : Date.now().toString(16) + '-' + Math.random().toString(16).slice(2, 14);
+      var caminho = pasta + '/' + id + '.jpg';
+      return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+        return fetch(CFG.supabaseUrl + '/storage/v1/object/referencias/' + caminho, {
+          method: 'POST', body: blob,
+          headers: { 'apikey': CFG.supabaseKey, 'Authorization': 'Bearer ' + CFG.supabaseKey,
+                     'Content-Type': 'image/jpeg', 'x-upsert': 'false' }
+        });
+      }).then(function (r) {
+        if (!r.ok) throw new Error('Não consegui enviar as imagens de referência. Tente de novo ou remova as imagens.');
+        return caminho;
+      });
+    }));
   }
   function demoBloqueios() {
     try { return JSON.parse(localStorage.getItem('fp_bloqueios_demo') || '[]'); }
@@ -228,32 +265,42 @@
         var codigo = Math.random().toString(16).slice(2, 8).toUpperCase();
         var fim = deMinutos(minutos(dados.hora) + dados.servico.duracao_min);
         var lista = demoLidos();
-        lista.push({
+        var novo = {
           codigo: codigo, barbeiro_id: escolhido.id, barbeiro: escolhido.nome,
           servico: dados.servico.nome, preco_centavos: dados.servico.preco_centavos,
           nome: dados.nome, telefone: soDigitos(dados.telefone),
-          dia: dados.dia, inicio: dados.hora, fim: fim, obs: dados.obs || '', status: 'confirmado'
-        });
-        demoGrava(lista);
+          dia: dados.dia, inicio: dados.hora, fim: fim, obs: dados.obs || '', status: 'confirmado',
+          anexos: (dados.anexos || []).slice()
+        };
+        lista.push(novo);
+        demoGravaComAnexos(lista, novo);
         return Promise.resolve({
           codigo: codigo, barbeiro: escolhido.nome, servico: dados.servico.nome, dia: dados.dia,
-          inicio: dados.hora, fim: fim, preco_centavos: dados.servico.preco_centavos
+          inicio: dados.hora, fim: fim, preco_centavos: dados.servico.preco_centavos,
+          anexos: novo.anexos.length
         });
       }
-      return rpc('criar_agendamento', {
-        p_servico_id: dados.servico.id,
-        p_barbeiro_id: dados.barbeiro ? dados.barbeiro.id : null,
-        p_nome: dados.nome,
-        p_telefone: soDigitos(dados.telefone),
-        p_data: dados.dia,
-        p_inicio: dados.hora,
-        p_obs: dados.obs || null
+      var enviados = [];
+      return sobeAnexos(dados.anexos).then(function (caminhos) {
+        enviados = caminhos;
+        var args = {
+          p_servico_id: dados.servico.id,
+          p_barbeiro_id: dados.barbeiro ? dados.barbeiro.id : null,
+          p_nome: dados.nome,
+          p_telefone: soDigitos(dados.telefone),
+          p_data: dados.dia,
+          p_inicio: dados.hora,
+          p_obs: dados.obs || null
+        };
+        if (caminhos.length) args.p_anexos = caminhos;
+        return rpc('criar_agendamento', args);
       }).then(function (linhas) {
         if (!linhas || !linhas.length) throw new Error('Não consegui confirmar. Tente de novo.');
         var a = linhas[0];
         return {
           codigo: a.codigo, barbeiro: a.barbeiro, servico: a.servico, dia: a.dia,
-          inicio: hhmm(a.inicio), fim: hhmm(a.fim), preco_centavos: a.preco_centavos
+          inicio: hhmm(a.inicio), fim: hhmm(a.fim), preco_centavos: a.preco_centavos,
+          anexos: enviados.length
         };
       });
     },
@@ -605,7 +652,8 @@
 
     API.criar({
       barbeiro: barbeiroEscolhido(), servico: estado.servico, nome: nome, telefone: tel,
-      dia: estado.dia, hora: estado.hora, obs: obs
+      dia: estado.dia, hora: estado.hora, obs: obs,
+      anexos: CFG.anexos ? CFG.anexos() : []
     }).then(function (a) {
       try { localStorage.setItem('fp_cliente', JSON.stringify({ nome: nome, tel: campoTel.value })); } catch (e) {}
       mostraSucesso(a, nome, obs);

@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pedidos · Franpton - Tattoo Studio</title>
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" content="#FAFAF7">
+<meta name="theme-color" content="#0A0C12">
 <link rel="icon" href="fotos/perfil.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/estilo.css?v=20260923223217">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/estilo.css?v=20260924114335">
 <style>
   .barra-dia{display:flex;align-items:center;gap:.6rem;margin:1.2rem 0}
   .barra-dia h2{font-size:1.3rem;flex:1}
@@ -161,8 +161,14 @@
   </main>
 </div>
 
+<!-- imagem de referência em tamanho grande -->
+<dialog class="lupa" id="lupa" aria-labelledby="lupa-titulo">
+  <div class="lupa-topo"><b id="lupa-titulo"></b><button type="button" class="btn btn-linha mini">Fechar</button></div>
+  <img id="lupa-img" alt="">
+</dialog>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="assets/config.js?v=20260923223217"></script>
+<script src="assets/config.js?v=20260924114335"></script>
 <script>
 (function () {
   'use strict';
@@ -265,13 +271,50 @@
   function normalizaDemo(a){
     return { codigo:a.codigo, barbeiro_id:a.barbeiro_id, barbeiro:a.barbeiro, servico:a.servico,
              preco:a.preco_centavos, nome:a.nome, telefone:a.telefone, dia:a.dia,
-             inicio:a.inicio, fim:a.fim, obs:a.obs, status:a.status };
+             inicio:a.inicio, fim:a.fim, obs:a.obs, status:a.status,
+             anexos:a.anexos||[], anexosFora:a.anexos_fora||0 };
   }
   function normalizaReal(a){
     return { codigo:a.codigo, barbeiro_id:a.barbeiro_id, barbeiro:a.barbeiro_nome, servico:a.servico_nome,
              preco:a.preco_centavos, nome:a.cliente_nome, telefone:a.cliente_telefone, dia:a.data,
-             inicio:hhmm(a.inicio), fim:hhmm(a.fim), obs:a.observacao, status:a.status };
+             inicio:hhmm(a.inicio), fim:hhmm(a.fim), obs:a.observacao, status:a.status,
+             anexos:a.anexos||[], anexosFora:0 };
   }
+
+  /* ---------------- imagens de referência ----------------
+     Demo: a imagem já vem pronta (data URL). Real: o bucket é privado,
+     então pede links assinados de 1 hora para quem está logado. */
+  function miniaturas(a) {
+    var box = el('div','anexo-admin');
+    var ul = el('ul','anexo-lista');
+    box.appendChild(ul);
+    function poe(srcs) {
+      srcs.forEach(function (src, i) {
+        if (!src) return;
+        var li = el('li'), b = el('button'), im = el('img');
+        b.type = 'button'; b.setAttribute('aria-label', 'Abrir referência ' + (i+1) + ' de ' + a.nome);
+        im.src = src; im.alt = ''; im.loading = 'lazy';
+        b.appendChild(im); li.appendChild(b); ul.appendChild(li);
+        b.addEventListener('click', function(){ abreLupa(src, 'Referência ' + (i+1) + ' de ' + a.nome); });
+      });
+    }
+    if (DEMO) poe(a.anexos);
+    else sb.storage.from('referencias').createSignedUrls(a.anexos, 3600).then(function (r) {
+      if (r.error) throw r.error;
+      poe(r.data.map(function(x){ return x.signedUrl; }));
+    }).catch(function(){ box.appendChild(el('span', null, 'Não consegui abrir as imagens de referência.')); });
+    if (a.anexosFora) box.appendChild(el('span', null, a.anexosFora + ' imagem(ns) não couberam na memória deste aparelho (demo).'));
+    return box;
+  }
+  function abreLupa(src, titulo) {
+    var d = $('#lupa');
+    $('#lupa-img').src = src; $('#lupa-img').alt = titulo;
+    $('#lupa-titulo').textContent = titulo;
+    if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+  }
+  $('#lupa').addEventListener('click', function (ev) {
+    if (ev.target.id !== 'lupa-img') { this.close ? this.close() : this.removeAttribute('open'); }
+  });
 
   /* ---------------- filtro por artista ---------------- */
 
@@ -392,6 +435,7 @@
       o.style.cssText = 'color:var(--creme);display:block;white-space:pre-line;margin-top:.35rem;padding:.6rem .8rem;border-left:3px solid var(--prata);background:var(--carvao);border-radius:8px';
       corpo.appendChild(o);
     }
+    if (a.anexos.length || a.anexosFora) corpo.appendChild(miniaturas(a));
 
     var acoes = el('div','acoes');
     acoes.style.marginTop = '.6rem';
